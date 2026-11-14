@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Голосование — Графики</title>
+<script src="https://cdn.plot.ly/plotly-2.35.0.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f1117;
+    color: #e0e0e0;
+    padding: 20px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 1.6rem;
+    margin-bottom: 8px;
+    color: #fff;
+  }
+  .subtitle {
+    text-align: center;
+    font-size: 0.85rem;
+    color: #888;
+    margin-bottom: 20px;
+  }
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+  }
+  .controls button {
+    background: #1e2230;
+    color: #ccc;
+    border: 1px solid #333;
+    padding: 6px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: all 0.2s;
+  }
+  .controls button:hover { background: #2a2f40; color: #fff; }
+  .chart-container {
+    background: #181b24;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 24px;
+    border: 1px solid #252a38;
+  }
+  .chart-title {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 12px;
+    padding-left: 4px;
+    color: #ddd;
+  }
+  .chart-title span { color: #888; font-weight: 400; font-size: 0.85rem; margin-left: 8px; }
+  .plotly-chart { width: 100%; }
+  .row { display: flex; gap: 20px; flex-wrap: wrap; }
+  .row .chart-container { flex: 1; min-width: 500px; }
+  @media (max-width: 1100px) {
+    .row { flex-direction: column; }
+    .row .chart-container { min-width: 300px; }
+  }
+  .loading {
+    text-align: center;
+    padding: 40px;
+    font-size: 1.2rem;
+    color: #888;
+  }
+</style>
+</head>
+<body>
+
+<h1>Финальное голосование</h1>
+<p class="subtitle">10 кандидатов · ~17000 снимков · каждый голосует 1 fav + 8 top9</p>
+
+<div class="controls">
+  <button onclick="selectAll()">Выбрать всех</button>
+  <button onclick="deselectAll()">Снять всех</button>
+  <button onclick="resetZoom()">Сбросить масштаб</button>
+</div>
+
+<div class="controls" id="legend-buttons"></div>
+
+<div class="chart-container">
+  <div class="chart-title">Fav-голоса <span>(главный голос)</span></div>
+  <div id="chart-fav" class="plotly-chart"></div>
+</div>
+
+<div class="chart-container">
+  <div class="chart-title">Top9-голоса <span>(вторичные голоса за 8 других)</span></div>
+  <div id="chart-top9" class="plotly-chart"></div>
+</div>
+
+<div class="chart-container">
+  <div class="chart-title">Ранг <span>(1 = лучшее место)</span></div>
+  <div id="chart-rank" class="plotly-chart"></div>
+</div>
+
+<div class="loading" id="loading">Загрузка данных...</div>
+
+<script>
+const COLORS = {
+  'GLADVALAKASPWNZ': '#FFD700',
+  'Dawgonosik': '#FF6B6B',
+  'melharucos': '#4ECDC4',
+  'OZON671GAMES3': '#45B7D1',
+  'Dunduk': '#96CEB4',
+  'VJLinktopgamer': '#FFEAA7',
+  'KarmikKoala': '#DDA0DD',
+  'Arrowwoods': '#98D8C8',
+  'Lasqa': '#F7DC6F',
+  'Nenormova': '#BB8FCE',
+};
+
+function loadJSON() {
+  return fetch('data.json').then(r => r.json());
+}
+
+function buildTraces(data, key, yTitle) {
+  const meta = data.meta;
+  const d = data[key].data;
+  const times = Object.keys(d).map(Number).sort((a,b) => a-b);
+  const traces = [];
+
+  meta.candidates.forEach(cand => {
+    const y = times.map(t => d[t][cand] !== undefined ? d[t][cand] : null);
+    traces.push({
+      x: times,
+      y: y,
+      name: cand,
+      type: 'scatter',
+      mode: 'lines',
+      line: { width: 2, color: COLORS[cand] || '#fff' },
+      hovertemplate: '<b>' + cand + '</b><br>t: %{x}<br>' + yTitle + ': %{y:.2f}<extra></extra>',
+      connectgaps: false,
+      showlegend: true,
+    });
+  });
+  return { traces, times, meta };
+}
+
+function makeChart(divId, traces, layout, config) {
+  const baseLayout = {
+    paper_bgcolor: '#181b24',
+    plot_bgcolor: '#181b24',
+    font: { color: '#aaa', family: 'Segoe UI, system-ui, sans-serif' },
+    margin: { l: 60, r: 30, t: 30, b: 60 },
+    xaxis: {
+      gridcolor: '#252a38',
+      zerolinecolor: '#252a38',
+      rangeslider: { visible: true, bgcolor: '#1e2230', bordercolor: '#333', borderwidth: 1 },
+      rangebuttons: [
+        { count: 1000, label: '1k', step: 'step', stepmode: 'backward' },
+        { count: 5000, label: '5k', step: 'step', stepmode: 'backward' },
+        { count: 10000, label: '10k', step: 'step', stepmode: 'backward' },
+        { step: 'all', label: 'Всё' },
+      ],
+    },
+    yaxis: {
+      gridcolor: '#252a38',
+      zerolinecolor: '#252a38',
+    },
+    legend: {
+      orientation: 'h',
+      y: -0.15,
+      x: 0.5,
+      xanchor: 'center',
+      yanchor: 'top',
+      font: { size: 11 },
+      bgcolor: 'rgba(0,0,0,0)',
+    },
+    dragmode: 'zoom',
+  };
+
+  const fullLayout = { ...baseLayout, ...layout };
+  Plotly.newPlot(divId, traces, fullLayout, config || {
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+    displaylogo: false,
+    responsive: true,
+  });
+}
+
+function makeRankChart(divId, traces, layout) {
+  const baseLayout = {
+    paper_bgcolor: '#181b24',
+    plot_bgcolor: '#181b24',
+    font: { color: '#aaa', family: 'Segoe UI, system-ui, sans-serif' },
+    margin: { l: 60, r: 30, t: 30, b: 60 },
+    xaxis: {
+      gridcolor: '#252a38',
+      zerolinecolor: '#252a38',
+      rangeslider: { visible: true, bgcolor: '#1e2230', bordercolor: '#333', borderwidth: 1 },
+      rangebuttons: [
+        { count: 1000, label: '1k', step: 'step', stepmode: 'backward' },
+        { count: 5000, label: '5k', step: 'step', stepmode: 'backward' },
+        { count: 10000, label: '10k', step: 'step', stepmode: 'backward' },
+        { step: 'all', label: 'Всё' },
+      ],
+    },
+    yaxis: {
+      gridcolor: '#252a38',
+      zerolinecolor: '#252a38',
+      autorange: 'reversed',
+      range: [0.5, 10.5],
+      tickvals: [1,2,3,4,5,6,7,8,9,10],
+    },
+    legend: {
+      orientation: 'h',
+      y: -0.15,
+      x: 0.5,
+      xanchor: 'center',
+      yanchor: 'top',
+      font: { size: 11 },
+      bgcolor: 'rgba(0,0,0,0)',
+    },
+  };
+
+  traces.forEach(t => {
+    const name = t.name;
+    if (name === 'GLADVALAKASPWNZ') t.line = { width: 3, color: '#FFD700' };
+    else if (name === 'Dawgonosik') t.line = { width: 2, color: '#C0C0C0' };
+    else t.line = { width: 1.5, color: COLORS[name] || '#fff' };
+  });
+
+  Plotly.newPlot(divId, traces, baseLayout, {
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+    displaylogo: false,
+    responsive: true,
+  });
+}
+
+function toggleCandidate(name) {
+  window._plots.forEach(id => {
+    const el = document.getElementById(id);
+    const idx = el.data.findIndex(t => t.name === name);
+    if (idx >= 0) {
+      const isVisible = el.data[idx].visible !== false;
+      Plotly.restyle(id, { visible: [isVisible ? false : true] }, [idx]);
+    }
+  });
+}
+
+function selectAll() {
+  window._plots.forEach(id => Plotly.restyle(id, { visible: true }));
+}
+
+function deselectAll() {
+  window._plots.forEach(id => Plotly.restyle(id, { visible: false }));
+}
+
+function resetZoom() {
+  syncing = true;
+  window._plots.forEach(id => {
+    Plotly.relayout(id, { 'xaxis.autorange': true, 'yaxis.autorange': true });
+  });
+  syncing = false;
+  lastSyncedRange = null;
+}
+
+// Init
+loadJSON().then(data => {
+  document.getElementById('loading').style.display = 'none';
+  
+  const fav = buildTraces(data, 'fav', 'Fav');
+  const top9 = buildTraces(data, 'top9', 'Top9');
+  const rank = buildTraces(data, 'rank', 'Rank');
+
+  makeChart('chart-fav', fav.traces, { yaxis: { title: 'Fav-голоса' } });
+  makeChart('chart-top9', top9.traces, { yaxis: { title: 'Top9-голоса' } });
+  makeRankChart('chart-rank', rank.traces, {});
+
+  const allCandidates = data.meta.candidates;
+  const btnContainer = document.getElementById('legend-buttons');
+  allCandidates.forEach(cand => {
+    const btn = document.createElement('button');
+    btn.textContent = cand;
+    btn.style.borderLeft = `3px solid ${COLORS[cand]}`;
+    btn.onclick = () => toggleCandidate(cand);
+    btnContainer.appendChild(btn);
+  });
+
+  window._plots = ['chart-fav','chart-top9','chart-rank'];
+  window._data = data;
+
+  // Sync x-axis across all charts (zoom + range slider)
+  let syncing = false;
+
+  function syncFromSource(sourceId, sourceRange) {
+    if (syncing) return;
+    syncing = true;
+    window._plots.forEach(otherId => {
+      if (otherId !== sourceId) {
+        Plotly.relayout(otherId, {
+          'xaxis.range': sourceRange,
+          'xaxis.autorange': false,
+        });
+      }
+    });
+    syncing = false;
+  }
+
+  // Listen for zoom events (mouse drag zoom)
+  window._plots.forEach(id => {
+    const el = document.getElementById(id);
+    el.on('plotly_relayout', function(eventData) {
+      if (eventData['xaxis.autorange'] === true) {
+        // User clicked "reset zoom" — reset all
+        syncFromSource(id, null);
+        window._plots.forEach(otherId => {
+          if (otherId !== id) {
+            Plotly.relayout(otherId, {
+              'xaxis.autorange': true,
+              'yaxis.autorange': true,
+            });
+          }
+        });
+        return;
+      }
+      let range = null;
+      if (eventData['xaxis.range[0]'] !== undefined && eventData['xaxis.range[1]'] !== undefined) {
+        range = [
+          parseFloat(eventData['xaxis.range[0]']),
+          parseFloat(eventData['xaxis.range[1]']),
+        ];
+      }
+      if (range) {
+        syncFromSource(id, range);
+      }
+    });
+  });
+
+  // Poll range slider position — handles the slider drag which may not fire reliable events
+  let lastSyncedRange = null;
+  setInterval(() => {
+    if (syncing) return;
+    // Check ALL charts, pick the one whose range changed most recently
+    let bestRange = null;
+    let bestKey = null;
+    window._plots.forEach(id => {
+      const el = document.getElementById(id);
+      const state = el.layout;
+      if (!state || !state.xaxis) return;
+      const xr = state.xaxis.range;
+      if (!xr || xr.length !== 2) return;
+      const range = [parseFloat(xr[0]), parseFloat(xr[1])];
+      const key = range[0].toFixed(2) + ',' + range[1].toFixed(2);
+      if (key !== lastSyncedRange) {
+        bestRange = range;
+        bestKey = key;
+      }
+    });
+    if (bestRange) {
+      lastSyncedRange = bestKey;
+      syncFromSource(null, bestRange); // null = sync to ALL including source
+    }
+  }, 80);
+}).catch(err => {
+  document.getElementById('loading').innerHTML = 
+    '<span style="color:#ff6b6b">Ошибка загрузки data.json</span><br>' +
+    '<span style="font-size:0.9rem;color:#888">Запустите: python -m http.server 8080 в папке analysis-final</span>';
+  console.error(err);
+});
+</script>
+</body>
+</html>
